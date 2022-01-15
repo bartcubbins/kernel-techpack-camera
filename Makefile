@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
 # auto-detect subdirs
+ifeq ($(CONFIG_ARCH_SDM845), y)
+include $(srctree)/techpack/camera/config/sdm845camera.conf
+endif
+
 ifeq ($(CONFIG_ARCH_KONA), y)
 include $(srctree)/techpack/camera/config/konacamera.conf
 endif
@@ -11,6 +15,11 @@ endif
 
 ifeq ($(CONFIG_ARCH_BENGAL), y)
 include $(srctree)/techpack/camera/config/bengalcamera.conf
+endif
+
+ifeq ($(CONFIG_ARCH_SDM845), y)
+LINUXINCLUDE    += \
+		-include $(srctree)/techpack/camera/config/sdm845cameraconf.h
 endif
 
 ifeq ($(CONFIG_ARCH_KONA), y)
