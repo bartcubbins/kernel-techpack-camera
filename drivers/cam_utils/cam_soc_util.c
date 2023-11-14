@@ -1434,11 +1434,6 @@ int cam_soc_util_regulator_disable(struct regulator *rgltr,
 		return -EINVAL;
 	}
 
-	if (strcmp(rgltr_name, "cam_clk"))
-		CAM_INFO(CAM_UTIL, "camera_debug | rname = %s, incoming vmin = %d, vmax = %d, is_enabled = %s",
-			rgltr_name, rgltr_min_volt, rgltr_max_volt,
-			regulator_is_enabled(rgltr) ? "ENABLED" : "DISABLED");
-
 	rc = regulator_disable(rgltr);
 	if (rc) {
 		CAM_ERR(CAM_UTIL, "%s regulator disable failed", rgltr_name);
@@ -1455,11 +1450,6 @@ int cam_soc_util_regulator_disable(struct regulator *rgltr,
 		regulator_set_load(rgltr, 0);
 		regulator_set_voltage(rgltr, 0, rgltr_max_volt);
 	}
-
-	if (strcmp(rgltr_name, "cam_clk"))
-		CAM_INFO(CAM_UTIL, "camera_debug | rname = %s, real v = %d, is_enabled = %s",
-			rgltr_name, regulator_get_voltage(rgltr),
-			regulator_is_enabled(rgltr) ? "ENABLED" : "DISABLED");
 
 	return rc;
 }
@@ -1496,11 +1486,6 @@ int cam_soc_util_regulator_enable(struct regulator *rgltr,
 		}
 	}
 
-	if (strcmp(rgltr_name, "cam_clk"))
-		CAM_INFO(CAM_UTIL, "camera_debug | rname = %s, incoming vmin = %d, vmax = %d, is_enabled = %s",
-			rgltr_name, rgltr_min_volt, rgltr_max_volt,
-			regulator_is_enabled(rgltr) ? "ENABLED" : "DISABLED");
-
 	rc = regulator_enable(rgltr);
 	if (rc) {
 		CAM_ERR(CAM_UTIL, "%s regulator_enable failed", rgltr_name);
@@ -1512,11 +1497,6 @@ int cam_soc_util_regulator_enable(struct regulator *rgltr,
 	else if (rgltr_delay)
 		usleep_range(rgltr_delay * 1000,
 			(rgltr_delay * 1000) + 1000);
-
-	if (strcmp(rgltr_name, "cam_clk"))
-		CAM_INFO(CAM_UTIL, "camera_debug | rname = %s, real v = %d, is_enabled = %s",
-			rgltr_name, regulator_get_voltage(rgltr),
-			regulator_is_enabled(rgltr) ? "ENABLED" : "DISABLED");
 
 	return rc;
 }
