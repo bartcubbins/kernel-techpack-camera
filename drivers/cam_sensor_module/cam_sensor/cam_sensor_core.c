@@ -12,7 +12,46 @@
 #include "cam_trace.h"
 #include "cam_common_util.h"
 #include "cam_packet_util.h"
+#include "../cam_ois_dw9784/dw9784_ois.h"
+#include "../cam_ois/cam_ois_dev.h"
+#include <linux/string.h>
+#include <linux/slab.h>
 
+#define THERMAL_MULT 1000
+
+void cam_sensor_fill_thermal_zone(struct cam_sensor_ctrl_t *s_ctrl)
+{
+
+	int rc = 0;
+	uint32_t sensor_temperature = 0;
+	uint32_t temperature_addr = 0x013A; // TEMP_SEN_OUT Address
+	struct cam_camera_slave_info *slave_info;
+
+	slave_info = &(s_ctrl->sensordata->slave_info);
+
+	if (!slave_info) {
+		CAM_ERR(CAM_SENSOR, " failed: %pK",
+			 slave_info);
+		return;
+	}
+
+	rc = camera_io_dev_read(
+		&(s_ctrl->io_master_info),
+		temperature_addr,
+		&sensor_temperature,
+		CAMERA_SENSOR_I2C_TYPE_WORD,  // addr_type
+		CAMERA_SENSOR_I2C_TYPE_BYTE); // data_type
+
+	CAM_DBG(CAM_SENSOR, "rc %d read a: 0x%x v: %d for sensor id 0x%x:",
+		rc, temperature_addr, sensor_temperature, slave_info->sensor_id);
+
+	if(rc == 0) {
+		s_ctrl->thermal_info.thermal = sensor_temperature * THERMAL_MULT;
+		s_ctrl->thermal_info.status = true;
+	} else {
+		s_ctrl->thermal_info.status = rc;
+	}
+}
 
 static int cam_sensor_update_req_mgr(
 	struct cam_sensor_ctrl_t *s_ctrl,
@@ -303,6 +342,11 @@ static int32_t cam_sensor_i2c_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 			goto end;
 		}
 
+		if (s_ctrl->sensordata->slave_info.sensor_id == 0x582 &&
+			(csl_packet->header.request_id % 3 == 0)) {
+			cam_sensor_fill_thermal_zone(s_ctrl);
+		}
+
 		i2c_reg_settings =
 			&i2c_data->per_frame[csl_packet->header.request_id %
 				MAX_PER_FRAME_ARRAY];
@@ -359,6 +403,11 @@ static int32_t cam_sensor_i2c_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 			CAM_WARN(CAM_SENSOR,
 				"Rxed NOP packets without linking");
 			goto end;
+		}
+
+		if (s_ctrl->sensordata->slave_info.sensor_id == 0x582 &&
+			(csl_packet->header.request_id % 3 == 0)) {
+			cam_sensor_fill_thermal_zone(s_ctrl);
 		}
 
 		i2c_reg_settings =
@@ -833,8 +882,11 @@ int cam_sensor_match_id(struct cam_sensor_ctrl_t *s_ctrl)
 	int rc = 0;
 	uint32_t chipid = 0;
 	struct cam_camera_slave_info *slave_info;
-
+	const char * imx582_sensor_name;
+	char *module_sensor_name;
+	uint32_t imx582_flag_and_module_id=0;
 	slave_info = &(s_ctrl->sensordata->slave_info);
+	imx582_sensor_name = s_ctrl->sensor_name;
 
 	if (!slave_info) {
 		CAM_ERR(CAM_SENSOR, " failed: %pK",
@@ -860,6 +912,29 @@ int cam_sensor_match_id(struct cam_sensor_ctrl_t *s_ctrl)
 				slave_info->sensor_id);
 		return -ENODEV;
 	}
+
+	if(s_ctrl->id == 0)
+	{
+		s_ctrl->io_master_info.cci_client->sid=0xA0>>1;
+		camera_io_dev_read(&(s_ctrl->io_master_info),0x01,&imx582_flag_and_module_id, CAMERA_SENSOR_I2C_TYPE_WORD,CAMERA_SENSOR_I2C_TYPE_BYTE);
+		CAM_DBG(CAM_SENSOR,"imx582_flag_and_module_id =%d",imx582_flag_and_module_id);
+
+		if(imx582_flag_and_module_id ==0x06)
+		{
+			module_sensor_name = "imx582";
+		}
+		else if (imx582_flag_and_module_id == 0x58)
+		{
+			module_sensor_name = "txd_imx582";
+		}
+		s_ctrl->io_master_info.cci_client->sid=0x34>>1;
+		if(0!=strcmp(imx582_sensor_name, module_sensor_name))
+		{
+			CAM_DBG(CAM_SENSOR,"imx582_sensor_name: %s", imx582_sensor_name);
+			return -ENODEV;
+		}
+	}
+
 	return rc;
 }
 
@@ -870,10 +945,11 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 	struct cam_control *cmd = (struct cam_control *)arg;
 	struct cam_sensor_power_ctrl_t *power_info =
 		&s_ctrl->sensordata->power_info;
+	struct cam_ois_ctrl_t o_ctrl = {0};
 	struct timespec64 ts;
 	uint64_t ms, sec, min, hrs;
 
-	if (!s_ctrl || !arg) {
+	if (!s_ctrl || !arg)  {
 		CAM_ERR(CAM_SENSOR, "s_ctrl is NULL");
 		return -EINVAL;
 	}
@@ -993,6 +1069,13 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 			}
 		}
 
+		if (s_ctrl->sensordata->slave_info.sensor_id == 0x582) {
+			CAM_INFO(CAM_SENSOR, "imx582 check ois firmware begin");
+			memcpy((void*)(&o_ctrl.io_master_info), (void*)(&(s_ctrl->io_master_info)), sizeof(struct camera_io_master));
+			o_ctrl.io_master_info.cci_client->sid = 0xE4 >> 1;
+			dw9784_download_open_camera(&o_ctrl);
+			s_ctrl->io_master_info.cci_client->sid = 0x34 >> 1;
+		}
 		rc = cam_sensor_power_down(s_ctrl);
 		if (rc < 0) {
 			CAM_ERR(CAM_SENSOR, "Fail in %s sensor Power Down",
@@ -1500,7 +1583,7 @@ int cam_sensor_power_up(struct cam_sensor_ctrl_t *s_ctrl)
 		CAM_ERR(CAM_SENSOR, "cci_init failed: rc: %d", rc);
 		goto cci_failure;
 	}
-
+	s_ctrl->thermal_info.status = -EINVAL;
 	return rc;
 
 cci_failure:
@@ -1566,6 +1649,7 @@ int cam_sensor_power_down(struct cam_sensor_ctrl_t *s_ctrl)
 		}
 	}
 
+	s_ctrl->thermal_info.status = -ENODEV;
 	camera_io_release(&(s_ctrl->io_master_info));
 
 	return rc;

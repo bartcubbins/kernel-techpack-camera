@@ -29,10 +29,6 @@ ifeq ($(CONFIG_ARCH_BENGAL), y)
 include $(CAMERA_KERNEL_ROOT)/config/holi.mk
 endif
 
-ifeq ($(CONFIG_ARCH_BLAIR), y)
-include $(CAMERA_KERNEL_ROOT)/config/holi.mk
-endif
-
 ifeq ($(CONFIG_ARCH_HOLI), y)
 include $(CAMERA_KERNEL_ROOT)/config/holi.mk
 endif
@@ -71,6 +67,9 @@ LINUXINCLUDE +=                                 \
 	-I$(CAMERA_KERNEL_ROOT)/
 # Optional include directories
 ccflags-$(CONFIG_MSM_GLOBAL_SYNX) += -I$(KERNEL_ROOT)/drivers/media/platform/msm/synx
+
+# After creating lists, add content of 'ccflags-m' variable to 'ccflags-y' one.
+ccflags-y += ${ccflags-m}
 
 camera-y := \
 	drivers/cam_req_mgr/cam_req_mgr_core.o \
@@ -240,7 +239,8 @@ camera-$(CONFIG_SPECTRA_SENSOR) += \
 	drivers/cam_sensor_module/cam_res_mgr/cam_res_mgr.o \
 	drivers/cam_sensor_module/cam_flash/cam_flash_dev.o \
 	drivers/cam_sensor_module/cam_flash/cam_flash_core.o \
-	drivers/cam_sensor_module/cam_flash/cam_flash_soc.o
+	drivers/cam_sensor_module/cam_flash/cam_flash_soc.o \
+	drivers/cam_sensor_module/cam_ois_dw9784/dw9784_ois.o
 
 camera-$(CONFIG_SPECTRA_CUSTOM) += \
 	drivers/cam_cust/cam_custom_hw_mgr/cam_custom_hw1/cam_custom_sub_mod_soc.o \
@@ -291,4 +291,3 @@ camera-$(CONFIG_SPECTRA_TFE) += \
 camera-y += drivers/camera_main.o
 
 obj-y += camera.o
-BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/camera.ko

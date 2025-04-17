@@ -175,6 +175,11 @@ int32_t cam_sensor_handle_random_write(
 {
 	struct i2c_settings_list  *i2c_list;
 	int32_t rc = 0, cnt;
+	struct list_head  *i2c_list_head = &(i2c_reg_settings->list_head);
+
+	/* Null pointer judgment */
+	if(i2c_list_head->prev == NULL)
+		return -ENOMEM;
 
 	i2c_list = cam_sensor_get_i2c_ptr(i2c_reg_settings,
 		cam_cmd_i2c_random_wr->header.count);
@@ -215,6 +220,11 @@ static int32_t cam_sensor_handle_continuous_write(
 {
 	struct i2c_settings_list *i2c_list;
 	int32_t rc = 0, cnt;
+	struct list_head  *i2c_list_head = &(i2c_reg_settings->list_head);
+
+	/* Null pointer judgment */
+	if(i2c_list_head->prev == NULL)
+		return -ENOMEM;
 
 	i2c_list = cam_sensor_get_i2c_ptr(i2c_reg_settings,
 		cam_cmd_i2c_continuous_wr->header.count);
