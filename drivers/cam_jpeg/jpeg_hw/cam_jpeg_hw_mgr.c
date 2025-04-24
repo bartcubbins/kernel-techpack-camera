@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/uaccess.h>
@@ -85,6 +84,10 @@ static int cam_jpeg_add_command_buffers(struct cam_packet *packet,
 	struct cam_cmd_buf_desc                          *cmd_desc = NULL;
 	struct cam_jpeg_request_data                     *jpeg_request_data;
 	struct cam_kmd_buf_info                           kmd_buf;
+	struct cam_jpeg_config_inout_param_info          *inout_params;
+	uint32_t                                         *cmd_buf_kaddr;
+	uintptr_t                                         kaddr;
+	size_t                                            len;
 	unsigned int                                      num_entry = 0;
 	unsigned int                                      i;
 	int                                               rc;
@@ -132,10 +135,9 @@ static int cam_jpeg_add_command_buffers(struct cam_packet *packet,
 	num_entry++;
 
 	jpeg_request_data->dev_type = ctx_data->jpeg_dev_acquire_info.dev_type;
+	jpeg_request_data->encode_size_buffer_ptr = NULL;
 	jpeg_request_data->request_id = packet->header.request_id;
 	jpeg_request_data->thumbnail_threshold_size = 0;
-	jpeg_request_data->out_size_mem_handle = 0;
-	jpeg_request_data->out_size_offset = 0;
 
 	CAM_DBG(CAM_JPEG,
 		"Change_Base HW_Entry. Offset: 0x%x Length: %u mem_handle: 0x%x num_entry: %d",
@@ -145,10 +147,6 @@ static int cam_jpeg_add_command_buffers(struct cam_packet *packet,
 		num_entry);
 
 	for (i = 0; i < packet->num_cmd_buf; i++) {
-		rc = cam_packet_util_validate_cmd_desc(&cmd_desc[i]);
-		if (rc)
-			return rc;
-
 		CAM_DBG(CAM_JPEG,
 			"Metadata: %u Offset: 0x%x Length: %u mem_handle: 0x%x num_entry: %d",
 			cmd_desc[i].meta_data, cmd_desc[i].offset,
@@ -169,8 +167,27 @@ static int cam_jpeg_add_command_buffers(struct cam_packet *packet,
 			num_entry++;
 			break;
 		case CAM_JPEG_PACKET_INOUT_PARAM:
-			jpeg_request_data->out_size_mem_handle = cmd_desc[i].mem_handle;
-			jpeg_request_data->out_size_offset = cmd_desc[i].offset;
+			rc = cam_mem_get_cpu_buf(cmd_desc[i].mem_handle,
+				(uintptr_t *)&kaddr, &len);
+			if (rc) {
+				CAM_ERR(CAM_JPEG, "unable to get info for cmd buf: %x %d");
+				return rc;
+			}
+
+			cmd_buf_kaddr = (uint32_t *)kaddr;
+
+			if ((cmd_desc[i].offset / sizeof(uint32_t)) >= len) {
+				CAM_ERR(CAM_JPEG, "Invalid offset: %u cmd buf len: %zu",
+					cmd_desc[i].offset, len);
+				return -EINVAL;
+			}
+
+			cmd_buf_kaddr += (cmd_desc[i].offset / sizeof(uint32_t));
+
+			inout_params = (struct cam_jpeg_config_inout_param_info *)cmd_buf_kaddr;
+			jpeg_request_data->encode_size_buffer_ptr = &inout_params->output_size;
+			CAM_DBG(CAM_JPEG, "encode_size_buf_ptr: 0x%p",
+				jpeg_request_data->encode_size_buffer_ptr);
 			break;
 		case CAM_JPEG_PACKET_GENERIC_BLOB:
 			rc = cam_packet_util_process_generic_cmd_buffer(&cmd_desc[i],
@@ -284,21 +301,6 @@ static int cam_jpeg_process_next_hw_update(void *priv, void *data,
 		goto end_error;
 	}
 
-	if (g_jpeg_hw_mgr.camnoc_misr_test) {
-		/* configure jpeg hw and camnoc misr */
-		rc = hw_mgr->devices[dev_type][0]->hw_ops.process_cmd(
-			hw_mgr->devices[dev_type][0]->hw_priv,
-			CAM_JPEG_CMD_CONFIG_HW_MISR,
-			&g_jpeg_hw_mgr.camnoc_misr_test,
-			sizeof(g_jpeg_hw_mgr.camnoc_misr_test));
-		if (rc) {
-			CAM_ERR(CAM_JPEG, "Failed to apply the configs %d",
-				rc);
-			buf_data->evt_param = CAM_SYNC_JPEG_EVENT_MISR_CONFIG_ERR;
-			goto end_error;
-		}
-	}
-
 	if (!hw_mgr->devices[dev_type][0]->hw_ops.start) {
 		CAM_ERR(CAM_JPEG, "op start null ");
 		buf_data->evt_param = CAM_SYNC_JPEG_EVENT_INVLD_CMD;
@@ -344,12 +346,6 @@ static int cam_jpeg_mgr_bottom_half_irq(void *priv, void *data)
 	struct cam_jpeg_request_data                            *jpeg_req;
 	struct cam_req_mgr_message                               v4l2_msg = {0};
 	struct cam_ctx_request                                  *req;
-	struct cam_jpeg_misr_dump_args                           misr_args;
-	struct cam_jpeg_config_inout_param_info                 *inout_params;
-	uint32_t						*cmd_buf_kaddr;
-	uintptr_t						 kaddr;
-	size_t							 len;
-	size_t							 inout_param_size;
 
 	if (!data || !priv) {
 		CAM_ERR(CAM_JPEG, "Invalid data");
@@ -393,20 +389,8 @@ static int cam_jpeg_mgr_bottom_half_irq(void *priv, void *data)
 
 	p_cfg_req->num_hw_entry_processed++;
 	CAM_DBG(CAM_JPEG, "dev_type: %u, hw_entry_processed %d",
-		dev_type, p_cfg_req->num_hw_entry_processed);
-
-	if (g_jpeg_hw_mgr.camnoc_misr_test) {
-		misr_args.req_id = p_cfg_req->req_id;
-		misr_args.enable_bug = g_jpeg_hw_mgr.bug_on_misr;
-		CAM_DBG(CAM_JPEG, "req %lld bug is enabled for MISR :%d",
-			misr_args.req_id, misr_args.enable_bug);
-
-		/* dump jpeg hw and camnoc misr */
-		rc = g_jpeg_hw_mgr.devices[dev_type][0]->hw_ops.process_cmd(
-			g_jpeg_hw_mgr.devices[dev_type][0]->hw_priv,
-			CAM_JPEG_CMD_DUMP_HW_MISR_VAL, &misr_args,
-			sizeof(struct cam_jpeg_misr_dump_args));
-	}
+		dev_type,
+		p_cfg_req->num_hw_entry_processed);
 
 	/* If we have processed just plane 1 for jpeg dma,
 	 * send the configuration data for plane 1 as well.*/
@@ -423,26 +407,10 @@ static int cam_jpeg_mgr_bottom_half_irq(void *priv, void *data)
 	}
 
 	jpeg_req = irq_cb_data->jpeg_req;
-	inout_param_size = sizeof(struct cam_jpeg_config_inout_param_info);
 
 	if (jpeg_req->dev_type == CAM_JPEG_RES_TYPE_ENC) {
-		rc = cam_mem_get_cpu_buf(jpeg_req->out_size_mem_handle,
-			(uintptr_t *)&kaddr, &len);
-		if (!rc) {
-			if ((inout_param_size > len) ||
-				(jpeg_req->out_size_offset >= (len - inout_param_size)))
-				CAM_ERR(CAM_JPEG,
-					"Inval off = %u cmd buf len = %zu inout_param_size = %d",
-					jpeg_req->out_size_offset, len, inout_param_size);
-			else {
-				cmd_buf_kaddr = (uint32_t *)kaddr;
-				cmd_buf_kaddr += (jpeg_req->out_size_offset / sizeof(uint32_t));
-				inout_params =
-					(struct cam_jpeg_config_inout_param_info *)cmd_buf_kaddr;
-				inout_params->output_size = task_data->u.output_encode_size;
-			}
-			cam_mem_put_cpu_buf(jpeg_req->out_size_mem_handle);
-		}
+		if (jpeg_req->encode_size_buffer_ptr)
+			*jpeg_req->encode_size_buffer_ptr = task_data->u.output_encode_size;
 		else
 			CAM_ERR(CAM_JPEG, "Buffer pointer for inout param is null");
 
@@ -652,8 +620,6 @@ static int cam_jpeg_insert_cdm_change_base(
 		CAM_ERR(CAM_JPEG, "Not enough buf offset %d len %d",
 			config_args->hw_update_entries[CAM_JPEG_CHBASE_CMD_BUFF_IDX].offset,
 			ch_base_len);
-		cam_mem_put_cpu_buf(
-			config_args->hw_update_entries[CAM_JPEG_CHBASE_CMD_BUFF_IDX].handle);
 		return -EINVAL;
 	}
 
@@ -688,9 +654,6 @@ static int cam_jpeg_insert_cdm_change_base(
 	*ch_base_iova_addr = 0;
 	ch_base_iova_addr += size;
 	*ch_base_iova_addr = 0;
-
-	cam_mem_put_cpu_buf(
-		config_args->hw_update_entries[CAM_JPEG_CHBASE_CMD_BUFF_IDX].handle);
 
 	return rc;
 }
@@ -986,8 +949,7 @@ static int cam_jpeg_mgr_prepare_hw_update(void *hw_mgr_priv,
 		return rc;
 	}
 
-	if (!packet->num_cmd_buf ||
-		(packet->num_cmd_buf > CAM_JPEG_MAX_NUM_CMD_BUFFS) ||
+	if ((packet->num_cmd_buf > CAM_JPEG_MAX_NUM_CMD_BUFFS) ||
 		!packet->num_patches || !packet->num_io_configs ||
 		(packet->num_io_configs > CAM_JPEG_IMAGE_MAX)) {
 		CAM_ERR(CAM_JPEG,
@@ -1859,7 +1821,6 @@ hw_dump:
 		CAM_WARN(CAM_JPEG, "dump offset overshoot len %zu offset %zu",
 			jpeg_dump_args.buf_len, dump_args->offset);
 		mutex_unlock(&hw_mgr->hw_mgr_mutex);
-		cam_mem_put_cpu_buf(dump_args->buf_handle);
 		return -ENOSPC;
 	}
 
@@ -1870,7 +1831,6 @@ hw_dump:
 		CAM_WARN(CAM_JPEG, "dump buffer exhaust remain %zu min %u",
 			remain_len, min_len);
 		mutex_unlock(&hw_mgr->hw_mgr_mutex);
-		cam_mem_put_cpu_buf(dump_args->buf_handle);
 		return -ENOSPC;
 	}
 
@@ -1903,7 +1863,6 @@ hw_dump:
 	CAM_DBG(CAM_JPEG, "Offset before %u after %u",
 		dump_args->offset, jpeg_dump_args.offset);
 	dump_args->offset = jpeg_dump_args.offset;
-	cam_mem_put_cpu_buf(dump_args->buf_handle);
 	return rc;
 }
 
@@ -2108,64 +2067,6 @@ end:
 	return dumped_len;
 }
 
-static int cam_jpeg_set_camnoc_misr_test(void *data, u64 val)
-{
-	g_jpeg_hw_mgr.camnoc_misr_test = val;
-	return 0;
-}
-
-static int cam_jpeg_get_camnoc_misr_test(void *data, u64 *val)
-{
-	*val = g_jpeg_hw_mgr.camnoc_misr_test;
-	return 0;
-}
-DEFINE_DEBUGFS_ATTRIBUTE(camnoc_misr_test, cam_jpeg_get_camnoc_misr_test,
-	cam_jpeg_set_camnoc_misr_test, "%08llu");
-
-static int cam_jpeg_set_bug_on_misr(void *data, u64 val)
-{
-	g_jpeg_hw_mgr.bug_on_misr = val;
-	return 0;
-}
-
-static int cam_jpeg_get_bug_on_misr(void *data, u64 *val)
-{
-	*val = g_jpeg_hw_mgr.bug_on_misr;
-	return 0;
-}
-DEFINE_DEBUGFS_ATTRIBUTE(bug_on_misr_mismatch, cam_jpeg_get_bug_on_misr,
-	cam_jpeg_set_bug_on_misr, "%08llu");
-
-static int cam_jpeg_mgr_create_debugfs_entry(void)
-{
-	int rc = 0;
-	struct dentry *dbgfileptr = NULL;
-
-	dbgfileptr = debugfs_create_dir("camera_jpeg", NULL);
-	if (!dbgfileptr) {
-		CAM_ERR(CAM_JPEG, "DebugFS could not create directory!");
-		rc = -ENOENT;
-		goto err;
-	}
-	/* Store parent inode for cleanup in caller */
-	g_jpeg_hw_mgr.dentry = dbgfileptr;
-
-	dbgfileptr = debugfs_create_file("camnoc_misr_test", 0644,
-		g_jpeg_hw_mgr.dentry, NULL, &camnoc_misr_test);
-
-	dbgfileptr = debugfs_create_file("bug_on_misr_mismatch", 0644,
-		g_jpeg_hw_mgr.dentry, NULL, &bug_on_misr_mismatch);
-
-	if (IS_ERR(dbgfileptr)) {
-		if (PTR_ERR(dbgfileptr) == -ENODEV)
-			CAM_WARN(CAM_JPEG, "DebugFS not enabled in kernel!");
-		else
-			rc = PTR_ERR(dbgfileptr);
-	}
-err:
-	return rc;
-}
-
 int cam_jpeg_hw_mgr_init(struct device_node *of_node, uint64_t *hw_mgr_hdl,
 	int *iommu_hdl, cam_jpeg_mini_dump_cb mini_dump_cb)
 {
@@ -2256,9 +2157,7 @@ int cam_jpeg_hw_mgr_init(struct device_node *of_node, uint64_t *hw_mgr_hdl,
 
 	cam_common_register_mini_dump_cb(cam_jpeg_hw_mgr_mini_dump_cb, "CAM_JPEG");
 
-	rc = cam_jpeg_mgr_create_debugfs_entry();
-	if (!rc)
-		return rc;
+	return rc;
 
 cdm_iommu_failed:
 	cam_smmu_destroy_handle(g_jpeg_hw_mgr.iommu_hdl);

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_sensor_dev.h"
@@ -154,20 +153,18 @@ static int cam_sensor_init_subdev_params(struct cam_sensor_ctrl_t *s_ctrl)
 	return rc;
 }
 
-static int cam_sensor_i2c_component_bind(struct device *dev,
-	struct device *master_dev, void *data)
+static int32_t cam_sensor_driver_i2c_probe(struct i2c_client *client,
+	const struct i2c_device_id *id)
 {
-	int32_t                   rc = 0;
-	int                       i = 0;
-	struct i2c_client        *client = NULL;
+	int32_t rc = 0;
+	int i = 0;
 	struct cam_sensor_ctrl_t *s_ctrl = NULL;
 	struct cam_hw_soc_info   *soc_info = NULL;
 
-	client = container_of(dev, struct i2c_client, dev);
-	if (client == NULL) {
-		CAM_ERR(CAM_SENSOR, "Invalid Args client: %pK",
-			client);
-		return -EINVAL;
+	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
+		CAM_ERR(CAM_SENSOR,
+			"%s :i2c_check_functionality failed", client->name);
+		return -EFAULT;
 	}
 
 	/* Create sensor control structure */
@@ -218,8 +215,6 @@ static int cam_sensor_i2c_component_bind(struct device *dev,
 	INIT_LIST_HEAD(&(s_ctrl->i2c_data.config_settings.list_head));
 	INIT_LIST_HEAD(&(s_ctrl->i2c_data.streamon_settings.list_head));
 	INIT_LIST_HEAD(&(s_ctrl->i2c_data.streamoff_settings.list_head));
-	INIT_LIST_HEAD(&(s_ctrl->i2c_data.reg_bank_unlock_settings.list_head));
-	INIT_LIST_HEAD(&(s_ctrl->i2c_data.reg_bank_lock_settings.list_head));
 	INIT_LIST_HEAD(&(s_ctrl->i2c_data.read_settings.list_head));
 
 	for (i = 0; i < MAX_PER_FRAME_ARRAY; i++) {
@@ -246,76 +241,6 @@ unreg_subdev:
 free_s_ctrl:
 	kfree(s_ctrl);
 	return rc;
-}
-
-static void cam_sensor_i2c_component_unbind(struct device *dev,
-	struct device *master_dev, void *data)
-{
-	struct i2c_client         *client = NULL;
-	struct cam_sensor_ctrl_t  *s_ctrl = NULL;
-	struct cam_hw_soc_info    *soc_info = NULL;
-
-	client = container_of(dev, struct i2c_client, dev);
-	if (!client) {
-		CAM_ERR(CAM_SENSOR,
-			"Failed to get i2c client");
-		return;
-	}
-
-	s_ctrl = i2c_get_clientdata(client);
-	if (!s_ctrl) {
-		CAM_ERR(CAM_SENSOR, "sensor device is NULL");
-		return;
-	}
-
-	CAM_DBG(CAM_SENSOR, "i2c remove invoked");
-	mutex_lock(&(s_ctrl->cam_sensor_mutex));
-	cam_sensor_shutdown(s_ctrl);
-	mutex_unlock(&(s_ctrl->cam_sensor_mutex));
-	cam_unregister_subdev(&(s_ctrl->v4l2_dev_str));
-	soc_info = &s_ctrl->soc_info;
-
-	kfree(s_ctrl->i2c_data.per_frame);
-	kfree(s_ctrl->i2c_data.frame_skip);
-	v4l2_set_subdevdata(&(s_ctrl->v4l2_dev_str.sd), NULL);
-	kfree(s_ctrl);
-}
-
-const static struct component_ops cam_sensor_i2c_component_ops = {
-	.bind = cam_sensor_i2c_component_bind,
-	.unbind = cam_sensor_i2c_component_unbind,
-};
-
-static int cam_sensor_i2c_driver_probe(struct i2c_client *client,
-	const struct i2c_device_id *id)
-{
-	int rc = 0;
-
-	if (client == NULL || id == NULL) {
-		CAM_ERR(CAM_SENSOR, "Invalid Args client: %pK id: %pK",
-			client, id);
-		return -EINVAL;
-	}
-
-	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
-		CAM_ERR(CAM_SENSOR, "%s :: i2c_check_functionality failed",
-			client->name);
-		return -EFAULT;
-	}
-
-	CAM_DBG(CAM_SENSOR, "Adding sensor component");
-	rc = component_add(&client->dev, &cam_sensor_i2c_component_ops);
-	if (rc)
-		CAM_ERR(CAM_SENSOR, "failed to add component rc: %d", rc);
-
-	return rc;
-}
-
-static int cam_sensor_i2c_driver_remove(struct i2c_client *client)
-{
-	component_del(&client->dev, &cam_sensor_i2c_component_ops);
-
-	return 0;
 }
 
 static int cam_sensor_component_bind(struct device *dev,
@@ -380,8 +305,6 @@ static int cam_sensor_component_bind(struct device *dev,
 	INIT_LIST_HEAD(&(s_ctrl->i2c_data.config_settings.list_head));
 	INIT_LIST_HEAD(&(s_ctrl->i2c_data.streamon_settings.list_head));
 	INIT_LIST_HEAD(&(s_ctrl->i2c_data.streamoff_settings.list_head));
-	INIT_LIST_HEAD(&(s_ctrl->i2c_data.reg_bank_unlock_settings.list_head));
-	INIT_LIST_HEAD(&(s_ctrl->i2c_data.reg_bank_lock_settings.list_head));
 	INIT_LIST_HEAD(&(s_ctrl->i2c_data.read_settings.list_head));
 
 	for (i = 0; i < MAX_PER_FRAME_ARRAY; i++) {
@@ -455,6 +378,34 @@ static int cam_sensor_platform_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static int cam_sensor_driver_i2c_remove(struct i2c_client *client)
+{
+	int                        i;
+	struct cam_sensor_ctrl_t  *s_ctrl = i2c_get_clientdata(client);
+	struct cam_hw_soc_info    *soc_info;
+
+	if (!s_ctrl) {
+		CAM_ERR(CAM_SENSOR, "sensor device is NULL");
+		return 0;
+	}
+
+	CAM_DBG(CAM_SENSOR, "i2c remove invoked");
+	mutex_lock(&(s_ctrl->cam_sensor_mutex));
+	cam_sensor_shutdown(s_ctrl);
+	mutex_unlock(&(s_ctrl->cam_sensor_mutex));
+	cam_unregister_subdev(&(s_ctrl->v4l2_dev_str));
+	soc_info = &s_ctrl->soc_info;
+	for (i = 0; i < soc_info->num_clk; i++)
+		devm_clk_put(soc_info->dev, soc_info->clk[i]);
+
+	kfree(s_ctrl->i2c_data.per_frame);
+	kfree(s_ctrl->i2c_data.frame_skip);
+	v4l2_set_subdevdata(&(s_ctrl->v4l2_dev_str.sd), NULL);
+	kfree(s_ctrl);
+
+	return 0;
+}
+
 static const struct of_device_id cam_sensor_driver_dt_match[] = {
 	{.compatible = "qcom,cam-sensor"},
 	{}
@@ -486,27 +437,17 @@ struct platform_driver cam_sensor_platform_driver = {
 	.remove = cam_sensor_platform_remove,
 };
 
-static const struct of_device_id cam_sensor_i2c_driver_dt_match[] = {
-	{.compatible = "qcom,cam-i2c-sensor"},
-	{}
-};
-
-MODULE_DEVICE_TABLE(of, cam_sensor_i2c_driver_dt_match);
-
 static const struct i2c_device_id i2c_id[] = {
 	{SENSOR_DRIVER_I2C, (kernel_ulong_t)NULL},
 	{ }
 };
 
-struct i2c_driver cam_sensor_i2c_driver = {
+static struct i2c_driver cam_sensor_driver_i2c = {
 	.id_table = i2c_id,
-	.probe = cam_sensor_i2c_driver_probe,
-	.remove = cam_sensor_i2c_driver_remove,
+	.probe = cam_sensor_driver_i2c_probe,
+	.remove = cam_sensor_driver_i2c_remove,
 	.driver = {
 		.name = SENSOR_DRIVER_I2C,
-		.owner = THIS_MODULE,
-		.of_match_table = cam_sensor_i2c_driver_dt_match,
-		.suppress_bind_attrs = true,
 	},
 };
 
@@ -521,7 +462,7 @@ int cam_sensor_driver_init(void)
 		return rc;
 	}
 
-	rc = i2c_add_driver(&cam_sensor_i2c_driver);
+	rc = i2c_add_driver(&cam_sensor_driver_i2c);
 	if (rc)
 		CAM_ERR(CAM_SENSOR, "i2c_add_driver failed rc = %d", rc);
 
@@ -531,7 +472,7 @@ int cam_sensor_driver_init(void)
 void cam_sensor_driver_exit(void)
 {
 	platform_driver_unregister(&cam_sensor_platform_driver);
-	i2c_del_driver(&cam_sensor_i2c_driver);
+	i2c_del_driver(&cam_sensor_driver_i2c);
 }
 
 MODULE_DESCRIPTION("cam_sensor_driver");
