@@ -119,6 +119,7 @@ enum cam_sensor_packet_opcodes {
 	CAM_SENSOR_PACKET_OPCODE_SENSOR_REG_BANK_UNLOCK,
 	CAM_SENSOR_PACKET_OPCODE_SENSOR_REG_BANK_LOCK,
 	CAM_SENSOR_PACKET_OPCODE_SENSOR_BUBBLE_UPDATE,
+	CAM_SENSOR_PACKET_OPCODE_SENSOR_RESCONFIG = 126,
 	CAM_SENSOR_PACKET_OPCODE_SENSOR_NOP = 127,
 };
 
@@ -346,6 +347,29 @@ struct cam_sensor_res_info {
 	__u32 num_valid_params;
 	__u32 valid_param_mask;
 	__u16 params[3];
+} __attribute__((packed));
+
+/**
+ * struct cam_sensor_res_info_legacy - Contains sensor res info
+ *
+ * res_index is the key property, it specifies the
+ * combinations of other properties enclosed in this
+ * structure.
+ *
+ * @version           :Version to indicate the change
+ * @res_index         : Sensor resolution index
+ * @num_batched_frames: Number of batched frames
+ * @num_valid_params  : Number of valid params
+ * @valid_param_mask  : Valid param mask
+ * @params            : params
+ */
+struct cam_sensor_res_info_legacy {
+	__u32 version;
+	__u16 res_index;
+	__u16 num_batched_frames;
+	__u32 num_valid_params;
+	__u32 valid_param_mask;
+	__u16 params[4];
 } __attribute__((packed));
 
 /**

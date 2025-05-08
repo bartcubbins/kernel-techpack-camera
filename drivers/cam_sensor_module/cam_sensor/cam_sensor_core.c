@@ -159,6 +159,7 @@ static void cam_sensor_release_per_frame_resource(
 	}
 }
 
+#if 0
 static int cam_sensor_handle_res_info(struct cam_sensor_res_info *res_info,
 	struct cam_sensor_ctrl_t *s_ctrl)
 {
@@ -238,6 +239,65 @@ static int32_t cam_sensor_generic_blob_handler(void *user_data,
 
 	return rc;
 }
+#else
+static int cam_sensor_handle_res_info(struct cam_sensor_res_info_legacy *res_info,
+	struct cam_sensor_ctrl_t *s_ctrl)
+{
+	int rc = 0;
+
+	if (!s_ctrl || !res_info) {
+		CAM_ERR(CAM_SENSOR, "Invalid params: res_info: %s, s_ctrl: %s",
+			CAM_IS_NULL_TO_STR(res_info),
+			CAM_IS_NULL_TO_STR(s_ctrl));
+		rc = -EINVAL;
+	}
+
+	if (rc == 0) {
+		s_ctrl->batch_number = s_ctrl->num_batched_frames;
+
+		CAM_DBG(CAM_SENSOR,
+			"Sensor[%s-%d] Received Res Info: num_batched_frames: %d ",
+			s_ctrl->sensor_name, s_ctrl->soc_info.index,
+			s_ctrl->batch_number);
+	}
+	return rc;
+}
+
+static int32_t cam_sensor_generic_blob_handler(void *user_data,
+	uint32_t blob_type, uint32_t blob_size, uint8_t *blob_data)
+{
+	int rc = 0;
+	struct cam_sensor_ctrl_t *s_ctrl =
+		(struct cam_sensor_ctrl_t *) user_data;
+
+	if (!blob_data || !blob_size) {
+		CAM_ERR(CAM_SENSOR, "Invalid blob info %pK %u", blob_data,
+			blob_size);
+		return -EINVAL;
+	}
+
+	switch (blob_type) {
+	case CAM_SENSOR_GENERIC_BLOB_RES_INFO: {
+		struct cam_sensor_res_info_legacy *res_info =
+			(struct cam_sensor_res_info_legacy *) blob_data;
+
+		if (blob_size < sizeof(struct cam_sensor_res_info_legacy)) {
+			CAM_ERR(CAM_SENSOR, "Invalid blob size expected: 0x%x actual: 0x%x",
+				sizeof(struct cam_sensor_res_info_legacy), blob_size);
+			return -EINVAL;
+		}
+
+		rc = cam_sensor_handle_res_info(res_info, s_ctrl);
+		break;
+	}
+	default:
+		CAM_WARN(CAM_SENSOR, "Invalid blob type %d", blob_type);
+		break;
+	}
+
+	return rc;
+}
+#endif
 
 static int32_t cam_sensor_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 	void *arg)
@@ -292,6 +352,10 @@ static int32_t cam_sensor_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 	remain_len -= (size_t)config.offset;
 	csl_packet = (struct cam_packet *)(generic_ptr +
 		(uint32_t)config.offset);
+
+	offset = (uint32_t *)&csl_packet->payload;
+	offset += csl_packet->cmd_buf_offset / 4;
+	cmd_desc = (struct cam_cmd_buf_desc *)(offset);
 
 	if (cam_packet_util_validate_packet(csl_packet,
 		remain_len)) {
@@ -458,6 +522,18 @@ static int32_t cam_sensor_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 				"Failed in adding request to req_mgr");
 		goto end;
 	}
+#if 1
+	case CAM_SENSOR_PACKET_OPCODE_SENSOR_RESCONFIG: {
+		CAM_DBG(CAM_SENSOR, "Received Resolution Config Buffer Cmd");
+		rc = cam_packet_util_process_generic_cmd_buffer(cmd_desc,
+			cam_sensor_generic_blob_handler, s_ctrl);
+
+		if (rc)
+			CAM_ERR(CAM_SENSOR, "Processing Generic Blob Handler Failure");
+		goto end;
+
+	}
+#endif
 	default:
 		CAM_ERR(CAM_SENSOR, "Invalid Packet Header opcode: %d",
 			csl_packet->header.op_code & 0xFFFFFF);
@@ -465,9 +541,6 @@ static int32_t cam_sensor_pkt_parse(struct cam_sensor_ctrl_t *s_ctrl,
 		goto end;
 	}
 
-	offset = (uint32_t *)&csl_packet->payload;
-	offset += csl_packet->cmd_buf_offset / 4;
-	cmd_desc = (struct cam_cmd_buf_desc *)(offset);
 	cmd_buf_type = cmd_desc->meta_data;
 
 	rc = cam_packet_util_validate_cmd_desc(cmd_desc);
@@ -1282,6 +1355,9 @@ int32_t cam_sensor_driver_cmd(struct cam_sensor_ctrl_t *s_ctrl,
 
 		s_ctrl->sensor_state = CAM_SENSOR_ACQUIRE;
 		s_ctrl->last_flush_req = 0;
+#if 1
+		s_ctrl->batch_number = 0;
+#endif
 		s_ctrl->is_stopped_by_user = false;
 		s_ctrl->last_updated_req = 0;
 		s_ctrl->last_applied_req = 0;
@@ -1581,9 +1657,14 @@ int cam_sensor_publish_dev_info(struct cam_req_mgr_device_info *info)
 
 	info->dev_id = CAM_REQ_MGR_DEVICE_SENSOR;
 	strlcpy(info->name, CAM_SENSOR_NAME, sizeof(info->name));
+#if 1
+	if (s_ctrl->batch_number >= 2) {
+		info->p_delay = 1;
+#else
 	if (s_ctrl->num_batched_frames >= 2) {
 		info->p_delay = 1;
 		info->m_delay = s_ctrl->modeswitch_delay;
+#endif
 	} else if (s_ctrl->pipeline_delay >= 1 && s_ctrl->pipeline_delay <= 3) {
 		info->p_delay = s_ctrl->pipeline_delay;
 		info->m_delay = s_ctrl->modeswitch_delay;

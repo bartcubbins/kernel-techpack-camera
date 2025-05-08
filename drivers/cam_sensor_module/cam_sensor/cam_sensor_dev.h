@@ -112,6 +112,7 @@ struct cam_sensor_dev_res_info {
  * @last_applied_req: Last updated request id
  * @last_applied_req: Last applied request id
  * @num_batched_frames: Number batched frames
+ * @batch_number: Number of batched frames
  * @is_stopped_by_user: Indicate if sensor has been stopped by userland
  * @stream_off_after_eof: Indicates if sensor needs to stream off after eof
  * @hw_no_ops: To determine whether HW operations need to be disabled
@@ -150,6 +151,7 @@ struct cam_sensor_ctrl_t {
 	int64_t                        last_updated_req;
 	int64_t                        last_applied_req;
 	uint32_t                       num_batched_frames;
+	uint32_t                       batch_number;
 	bool                           is_stopped_by_user;
 	bool                           stream_off_after_eof;
 	bool                           hw_no_ops;
