@@ -43,9 +43,15 @@ static int cam_eeprom_read_memory(struct cam_eeprom_ctrl_t *e_ctrl,
 	eb_info = (struct cam_eeprom_soc_private *)e_ctrl->soc_info.soc_private;
 
 	for (j = 0; j < block->num_map; j++) {
-		CAM_DBG(CAM_EEPROM, "slave-addr = 0x%X", emap[j].saddr);
+		CAM_ERR(CAM_EEPROM, "slave-addr = 0x%X", emap[j].saddr);
 		if (emap[j].saddr) {
 			eb_info->i2c_info.slave_addr = emap[j].saddr;
+			// FOR IMX663
+			if (eb_info->i2c_info.slave_addr == 0x52) {
+				CAM_INFO(CAM_EEPROM, "SWAP EEPROM SLAVE ADDR FROM 0x%02x TO 0x20\n", eb_info->i2c_info.slave_addr);
+				eb_info->i2c_info.slave_addr = 0x20;
+			}
+
 			rc = cam_eeprom_update_i2c_info(e_ctrl,
 				&eb_info->i2c_info);
 			if (rc) {
@@ -256,7 +262,7 @@ static int cam_eeprom_match_id(struct cam_eeprom_ctrl_t *e_ctrl)
 		&id[0], 2);
 	if (rc)
 		return rc;
-	CAM_DBG(CAM_EEPROM, "read 0x%x 0x%x, check 0x%x 0x%x",
+	CAM_ERR(CAM_EEPROM, "read 0x%x 0x%x, check 0x%x 0x%x",
 		id[0], id[1], client->spi_client->mfr_id0,
 		client->spi_client->device_id0);
 	if (id[0] != client->spi_client->mfr_id0
@@ -303,7 +309,7 @@ int32_t cam_eeprom_parse_read_memory_map(struct device_node *of_node,
 	if (e_ctrl->eeprom_device_type == MSM_CAMERA_SPI_DEVICE) {
 		rc = cam_eeprom_match_id(e_ctrl);
 		if (rc) {
-			CAM_DBG(CAM_EEPROM, "eeprom not matching %d", rc);
+			CAM_ERR(CAM_EEPROM, "eeprom not matching %d", rc);
 			goto power_down;
 		}
 	}
@@ -403,7 +409,7 @@ static int32_t cam_eeprom_update_slaveInfo(struct cam_eeprom_ctrl_t *e_ctrl,
 
 	rc = cam_eeprom_update_i2c_info(e_ctrl,
 		&soc_private->i2c_info);
-	CAM_DBG(CAM_EEPROM, "Slave addr: 0x%x Freq Mode: %d",
+	CAM_ERR(CAM_EEPROM, "Slave addr: 0x%x Freq Mode: %d",
 		soc_private->i2c_info.slave_addr,
 		soc_private->i2c_info.i2c_freq_mode);
 
@@ -599,7 +605,7 @@ static int32_t cam_eeprom_handle_continuous_write(
 	int32_t rc = 0, cnt = 0;
 
 
-	CAM_DBG(CAM_EEPROM, "Total Size: %d",
+	CAM_ERR(CAM_EEPROM, "Total Size: %d",
 		cam_cmd_i2c_continuous_wr->header.count);
 
 	i2c_list = cam_eeprom_get_i2c_ptr(i2c_reg_settings,
@@ -636,7 +642,7 @@ static int32_t cam_eeprom_handle_continuous_write(
 			cam_cmd_i2c_continuous_wr->reg_addr;
 		e_ctrl->eebin_info.size =
 			cam_cmd_i2c_continuous_wr->header.count;
-		CAM_DBG(CAM_EEPROM, "Header Count: %d",
+		CAM_ERR(CAM_EEPROM, "Header Count: %d",
 			cam_cmd_i2c_continuous_wr->header.count);
 		e_ctrl->eebin_info.is_valid = 1;
 
@@ -729,7 +735,7 @@ static int32_t cam_eeprom_parse_write_memory_packet(
 	offset += (csl_packet->cmd_buf_offset / sizeof(uint32_t));
 	cmd_desc = (struct cam_cmd_buf_desc *)(offset);
 
-	CAM_DBG(CAM_EEPROM, "Number of Command Buffers: %d",
+	CAM_ERR(CAM_EEPROM, "Number of Command Buffers: %d",
 		csl_packet->num_cmd_buf);
 
 	if (!csl_packet->num_cmd_buf) {
@@ -810,14 +816,14 @@ static int32_t cam_eeprom_parse_write_memory_packet(
 						i2c_info->i2c_freq_mode;
 					cci->sid =
 						i2c_info->slave_addr >> 1;
-					CAM_DBG(CAM_EEPROM,
+					CAM_ERR(CAM_EEPROM,
 						"Slave addr: 0x%x Freq Mode: %d",
 						i2c_info->slave_addr,
 						i2c_info->i2c_freq_mode);
 				} else if (master == I2C_MASTER) {
 					e_ctrl->io_master_info.client->addr =
 						i2c_info->slave_addr;
-					CAM_DBG(CAM_EEPROM,
+					CAM_ERR(CAM_EEPROM,
 						"Slave addr: 0x%x",
 						i2c_info->slave_addr);
 				} else if (master == SPI_MASTER) {
@@ -848,7 +854,7 @@ static int32_t cam_eeprom_parse_write_memory_packet(
 					goto end;
 				}
 
-				CAM_DBG(CAM_EEPROM,
+				CAM_ERR(CAM_EEPROM,
 					"CAMERA_SENSOR_CMD_TYPE_I2C_CONT_WR");
 				rc = cam_eeprom_handle_continuous_write(
 					e_ctrl,
@@ -868,7 +874,7 @@ static int32_t cam_eeprom_parse_write_memory_packet(
 				break;
 			}
 			case CAMERA_SENSOR_CMD_TYPE_WAIT: {
-				CAM_DBG(CAM_EEPROM,
+				CAM_ERR(CAM_EEPROM,
 					"CAMERA_SENSOR_CMD_TYPE_WAIT");
 				if (generic_op_code ==
 					CAMERA_SENSOR_WAIT_OP_HW_UCND ||
@@ -1106,16 +1112,20 @@ static int32_t cam_eeprom_get_cal_data(struct cam_eeprom_ctrl_t *e_ctrl,
 	size_t                buf_size;
 	uint8_t               *read_buffer;
 	size_t                remain_len = 0;
+	char *eeprom_buff;
+	size_t buffer_size;
+	int offset = 0;
+	struct cam_hw_soc_info *soc_info = &e_ctrl->soc_info;
 
 	io_cfg = (struct cam_buf_io_cfg *) ((uint8_t *)
 		&csl_packet->payload +
 		csl_packet->io_configs_offset);
 
-	CAM_DBG(CAM_EEPROM, "number of IO configs: %d:",
+	CAM_ERR(CAM_EEPROM, "number of IO configs: %d:",
 		csl_packet->num_io_configs);
 
 	for (i = 0; i < csl_packet->num_io_configs; i++) {
-		CAM_DBG(CAM_EEPROM, "Direction: %d:", io_cfg->direction);
+		CAM_ERR(CAM_EEPROM, "Direction: %d:", io_cfg->direction);
 		if (io_cfg->direction == CAM_BUF_OUTPUT) {
 			rc = cam_mem_get_cpu_buf(io_cfg->mem_handle[0],
 				&buf_addr, &buf_size);
@@ -1132,7 +1142,7 @@ static int32_t cam_eeprom_get_cal_data(struct cam_eeprom_ctrl_t *e_ctrl,
 			}
 
 			remain_len = buf_size - io_cfg->offsets[0];
-			CAM_DBG(CAM_EEPROM, "buf_addr : %pK, buf_size : %zu\n",
+			CAM_ERR(CAM_EEPROM, "buf_addr : %pK, buf_size : %zu\n",
 				(void *)buf_addr, buf_size);
 
 			read_buffer = (uint8_t *)buf_addr;
@@ -1153,11 +1163,25 @@ static int32_t cam_eeprom_get_cal_data(struct cam_eeprom_ctrl_t *e_ctrl,
 				return rc;
 			}
 
-			CAM_DBG(CAM_EEPROM, "copy the data, len:%d",
+			CAM_ERR(CAM_EEPROM, "copy the data, len:%d",
 				e_ctrl->cal_data.num_data);
 			memcpy(read_buffer, e_ctrl->cal_data.mapdata,
 					e_ctrl->cal_data.num_data);
 			cam_mem_put_cpu_buf(io_cfg->mem_handle[0]);
+///////////////////////////////////////////////////////
+			buffer_size = (e_ctrl->cal_data.num_data * 3) + 32;
+			eeprom_buff = devm_kmalloc(soc_info->dev, buffer_size, GFP_KERNEL);
+			if (eeprom_buff) {
+				offset += snprintf(eeprom_buff + offset, buffer_size - offset, "EEPROM DATA: ");
+				for (i = 0; i < e_ctrl->cal_data.num_data && offset < buffer_size - 4; i++)
+					offset += snprintf(eeprom_buff + offset, buffer_size - offset, "%02X ", read_buffer[i]);
+
+				CAM_INFO(CAM_EEPROM, "EEPROM BEGIN\n");
+				CAM_INFO(CAM_EEPROM, "%s\n", eeprom_buff);
+				CAM_INFO(CAM_EEPROM, "EEPROM END\n");
+			}
+///////////////////////////////////////////////////////
+
 		} else {
 			CAM_ERR(CAM_EEPROM, "Invalid direction");
 			rc = -EINVAL;
@@ -1512,7 +1536,7 @@ int32_t cam_eeprom_driver_cmd(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 			rc = -EFAULT;
 			goto release_mutex;
 		}
-		CAM_DBG(CAM_EEPROM, "eeprom_cap: ID: %d", eeprom_cap.slot_info);
+		CAM_ERR(CAM_EEPROM, "eeprom_cap: ID: %d", eeprom_cap.slot_info);
 		break;
 	case CAM_ACQUIRE_DEV:
 		rc = cam_eeprom_get_dev_handle(e_ctrl, arg);
@@ -1556,7 +1580,7 @@ int32_t cam_eeprom_driver_cmd(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 		}
 		break;
 	default:
-		CAM_DBG(CAM_EEPROM, "invalid opcode");
+		CAM_ERR(CAM_EEPROM, "invalid opcode");
 		break;
 	}
 
